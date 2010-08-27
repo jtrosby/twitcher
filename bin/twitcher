@@ -44,7 +44,7 @@ def parse_args():
                     default=None,
                     help='Location of the twitcher config files.')
   parser.add_option('--zkservers', action='store', dest='zkservers',
-                    default='zookeeper.local.twitter.com:2181',
+                    default=None,
                     help='Comma-separated list of host:port pairs.')
   (options, args) = parser.parse_args()
   parser.destroy()
@@ -65,6 +65,18 @@ def parse_args():
   else:
     if options.config_path is None:
       options.config_path = '/etc/twitcher'
+      
+  if options.zkservers is None:
+    # TODO: Should be parsed smarter and maybe validated
+    server_file_path = options.config_path + '/servers'
+    try:
+      server_file = open(server_file_path, 'r')
+      options.config_path = server_file.readline();
+      server_file.close()
+    except Exception, e:
+      print >> sys.stderr, "The server list must be configured in %s or set with --zkservers" \
+              % server_file_path
+      sys.exit(1)
 
   # Set the logging level to debug/info/warning.
   logger = logging.getLogger()
