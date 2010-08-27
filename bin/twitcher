@@ -71,7 +71,7 @@ def parse_args():
     server_file_path = options.config_path + '/servers'
     try:
       server_file = open(server_file_path, 'r')
-      options.config_path = server_file.readline();
+      options.zkservers = server_file.readline().rstrip();
       server_file.close()
     except Exception, e:
       print >> sys.stderr, "The server list must be configured in %s or set with --zkservers" \
