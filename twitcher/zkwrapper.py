@@ -54,6 +54,7 @@ class ZKWrapper(object):
     self._zookeeper = None
     self._clientid = None
     self._pending_gets = []
+    self._pending_get_childrens = []
     self._connect()
 
   def _global_watch(self, zh, event, state, path):
@@ -75,6 +76,9 @@ class ZKWrapper(object):
       while self._pending_gets:
         path, w, h = self._pending_gets.pop()
         zookeeper.aget(self._zookeeper, path, w, h)
+      while self._pending_get_childrens:
+        path, w, h = self._pending_get_childrens.pop()
+        zookeeper.aget_children(self._zookeeper, path, w, h)
 
   _DEFAULT_TIMEOUT = 10000
 
@@ -124,6 +128,21 @@ class ZKWrapper(object):
       A lambda object.
     """
     return (lambda z, r, d, s: self._handler(z, r, d, s, path))
+  
+  def _children_handler_wrapper(self, path):
+    """Returns a lambda function that wraps the self._children_handler call.
+    
+    This returns a lambda function that actually wraps the self._children_handler
+    function in order to add path data which is not normally exposed to
+    the client.
+    
+    Args:
+      path: The zookeeper path being watched.
+
+    Returns:
+      A lambda object.
+    """    
+    return (lambda zh, rc, data: self._children_handler(zh, rc, data, path))
 
   def aget(self, path, watcher=None, handler=None):
     """A simple wrapper for zookeeper async get function.
@@ -207,10 +226,7 @@ class ZKWrapper(object):
         w = self._children_watcher
       else:
         w = None
-      # We use a lambda here so we can make sure that the path gets appended
-      # to the args. This allows us to multiplex the call.
-      h = (lambda zh, rc, data: self._children_handler(zh, rc, data, path))
-      # FIXME(error handling)
+      h = self._children_handler_wrapper(path)
       logging.debug('Performing a get_children against %s', path)
       zookeeper.aget_children(self._zookeeper, path, w, h)
 
@@ -331,6 +347,8 @@ class ZKWrapper(object):
     Returns:
       Nothing.
     """
+    if event == zookeeper.SESSION_EVENT:
+      return
     logging.info('Recieved a zookeeper child node watcher notification for %s', path)
     watches = self._children_watches.pop(path, None)
     self._children_watcher_lock.acquire()
@@ -353,12 +371,17 @@ class ZKWrapper(object):
 
     Returns:
       Nothing.
-    """      
-    logging.info('Received child nodes of %s', path)
-    logging.debug('Child nodes of %s %r.', path, children)
-    self._children_watcher_lock.acquire()
-    handlers = self._children_handlers.pop(path, None)
-    self._children_watcher_lock.release()
-    while handlers:
-      handler = handlers.pop()
-      handler(self, rc, children, path)
+    """
+    if rc == zookeeper.OK:
+      logging.info('Received child nodes of %s', path)
+      logging.debug('Child nodes of %s %r.', path, children)
+      self._children_watcher_lock.acquire()
+      handlers = self._children_handlers.pop(path, None)
+      self._children_watcher_lock.release()
+      while handlers:
+        handler = handlers.pop()
+        handler(self, rc, children, path)
+    elif rc == zookeeper.CONNECTIONLOSS:
+      logging.info('Child watcher event triggered for %s: Connection loss.', path)
+      h = self._children_handler_wrapper(path)
+      self._pending_get_childrens.append((path, self._children_watcher, h))
